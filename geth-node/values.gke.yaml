@@ -1,0 +1,14 @@
+persistence:
+  storageClass: premium-rwo
+
+nodeSelector:
+  cloud.google.com/gke-nodepool: ethereum-pool
+
+service:
+  p2pType: LoadBalancer
+
+jwt:
+  source: external-secrets
+  externalSecret:
+    enabled: true
+    secretStoreName: gcp-secretstore

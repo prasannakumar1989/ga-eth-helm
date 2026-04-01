@@ -1,0 +1,65 @@
+# templates/NOTES.txt
+Geth node {{ .Release.Name }} deployed successfully.
+
+Network:  {{ .Values.network }}
+Syncmode: {{ .Values.syncMode }}
+Storage:  {{ .Values.persistence.size }} ({{ .Values.persistence.storageClass }})
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+JWT SECRET
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if eq .Values.jwt.source "manual" }}
+JWT secret must be created before geth will start:
+
+  openssl rand -hex 32 | tr -d '\n' > jwt.hex
+  kubectl create secret generic {{ .Values.jwt.secretName }} \
+    --from-file=jwt.hex=./jwt.hex \
+    -n {{ .Release.Namespace }}
+
+If the secret already exists, ignore this.
+{{- else if eq .Values.jwt.source "external-secrets" }}
+JWT secret will be provisioned automatically via External Secrets Operator
+from GCP Secret Manager key: {{ .Values.jwt.externalSecret.remoteKey }}
+
+Ensure the ExternalSecret is syncing:
+  kubectl get externalsecret {{ .Values.jwt.secretName }} -n {{ .Release.Namespace }}
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+VERIFY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Check pod status:
+  kubectl get pods -n {{ .Release.Namespace }} -w
+
+Follow logs:
+  kubectl logs -f statefulset/{{ include "geth-node.fullname" . }} -n {{ .Release.Namespace }}
+
+Attach to geth console:
+  kubectl exec -it {{ include "geth-node.fullname" . }}-0 \
+    -n {{ .Release.Namespace }} -- geth attach /data/geth.ipc
+
+Check sync progress (inside geth console):
+  > eth.syncing
+  > eth.blockNumber
+  > net.peerCount
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RPC ENDPOINT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if eq .Values.service.p2pType "NodePort" }}
+Running on minikube — get the RPC endpoint:
+  minikube service {{ include "geth-node.fullname" . }}-rpc -n {{ .Release.Namespace }} --url
+{{- else }}
+RPC is available within the cluster at:
+  http://{{ include "geth-node.fullname" . }}-rpc.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.rpcPort }}
+{{- end }}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NOTE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+{{- if eq .Values.network "mainnet" }}
+Mainnet snap sync typically takes 4-8 hours on a fast connection.
+The node will not respond to eth_blockNumber reliably until sync completes.
+{{- else }}
+{{ .Values.network | title }} snap sync typically takes 30-60 minutes.
+{{- end }}

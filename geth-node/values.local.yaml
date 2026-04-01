@@ -1,0 +1,25 @@
+persistence:
+  size: 20Gi
+  storageClass: standard
+
+nodeSelector: {}
+
+service:
+  p2pType: NodePort
+
+resources:
+  requests:
+    cpu: "500m"
+    memory: 2Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+jwt:
+  source: manual
+  secretName: geth-jwt
+  externalSecret:
+    enabled: false
+
+initChown:
+  enabled: false

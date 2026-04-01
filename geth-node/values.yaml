@@ -1,0 +1,49 @@
+image:
+  repository: ethereum/client-go
+  tag: stable
+  pullPolicy: IfNotPresent
+
+# overridden per network values file
+network: sepolia
+syncMode: snap
+
+persistence:
+  size: 100Gi
+  storageClass: standard
+
+resources:
+  requests:
+    cpu: "2"
+    memory: 8Gi
+  limits:
+    cpu: "4"
+    memory: 16Gi
+
+service:
+  rpcPort: 8545
+  wsPort: 8546
+  p2pPort: 30303
+  p2pType: LoadBalancer
+  httpApi: eth,net,web3,txpool
+  wsApi: eth,net,web3
+
+jwt:
+  source: manual
+  secretName: geth-jwt
+  externalSecret:
+    enabled: false
+    provider: gcp
+    remoteKey: ethereum/geth-jwt
+    secretStoreName: gcp-secretstore
+
+# no node selector by default
+nodeSelector: {}
+
+affinity: {}
+
+replicaCount: 1
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}

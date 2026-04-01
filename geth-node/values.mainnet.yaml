@@ -1,0 +1,29 @@
+network: mainnet
+
+persistence:
+  size: 1Ti
+  # storageClass intentionally not set here —
+  # comes from the infra layer (values.gke.yaml or values.local.yaml)
+
+resources:
+  requests:
+    cpu: "4"
+    memory: 16Gi
+  limits:
+    cpu: "8"
+    memory: 32Gi
+
+service:
+  # tighter API surface on mainnet — no txpool or debug exposure
+  httpApi: eth,net,web3
+  wsApi: eth,net,web3
+  p2pType: LoadBalancer
+
+jwt:
+  source: external-secrets # mainnet always pulls from Secret Manager
+  secretName: geth-jwt-mainnet
+  externalSecret:
+    enabled: true
+    provider: gcp
+    remoteKey: ethereum/geth-jwt-mainnet
+    secretStoreName: gcp-secretstore

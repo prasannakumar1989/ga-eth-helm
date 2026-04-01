@@ -1,0 +1,197 @@
+# templates/statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "geth-node.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "geth-node.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "geth-node.fullname" . }}
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "geth-node.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1       # for replicas:1 this means take down old before new starts
+  template:
+    metadata:
+      labels:
+        {{- include "geth-node.selectorLabels" . | nindent 8 }}
+      annotations:
+        {{- /*
+          Triggers a pod rollout when the JWT secret name changes.
+          Without this, rotating the secret has no effect until
+          the pod is manually restarted.
+        */}}
+        checksum/jwt-secret: {{ .Values.jwt.secretName | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "geth-node.serviceAccountName" . }}
+
+      {{- /*
+        nodeSelector comes from the infra layer:
+          GKE  → ethereum-pool node pool
+          local → {} (empty, minikube has one node)
+      */}}
+      {{- if .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      {{- end }}
+
+      {{- /*
+        affinity is intentionally omitted for replicas:1.
+        podAntiAffinity has no effect with a single pod.
+        nodeAffinity is handled via nodeSelector above.
+      */}}
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      {{- if .Values.initChown.enabled }}
+      initContainers:
+        {{- /*
+          GKE mounts PersistentVolumes as root by default.
+          This init container fixes ownership before geth starts.
+          Safe to run on minikube too — just a no-op if already correct.
+        */}}
+        - name: init-chown
+          image: busybox:stable
+          command: ["sh", "-c", "chown -R 1000:1000 /data"]
+          securityContext:
+            runAsUser: 0        # needs root to chown
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      {{- end }}
+
+      containers:
+        - name: geth
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          args:
+            - --{{ .Values.network }}
+            - --syncmode={{ .Values.syncMode }}
+            - --datadir=/data
+            {{- /* HTTP RPC */}}
+            - --http
+            - --http.addr=0.0.0.0
+            - --http.port={{ .Values.service.rpcPort }}
+            - --http.api={{ .Values.service.httpApi }}
+            - --http.corsdomain=*
+            - --http.vhosts=*
+            {{- /* WebSocket */}}
+            - --ws
+            - --ws.addr=0.0.0.0
+            - --ws.port={{ .Values.service.wsPort }}
+            - --ws.api={{ .Values.service.wsApi }}
+            - --ws.origins=*
+            {{- /* Engine API — only rendered if JWT is configured */}}
+            {{- if .Values.jwt.secretName }}
+            - --authrpc.addr=0.0.0.0
+            - --authrpc.port=8551
+            - --authrpc.vhosts=*
+            - --authrpc.jwtsecret=/secrets/jwt.hex
+            {{- end }}
+            {{- /* P2P */}}
+            - --port={{ .Values.service.p2pPort }}
+            - --maxpeers=50
+
+          ports:
+            - name: http-rpc
+              containerPort: {{ .Values.service.rpcPort }}
+              protocol: TCP
+            - name: ws
+              containerPort: {{ .Values.service.wsPort }}
+              protocol: TCP
+            {{- if .Values.jwt.secretName }}
+            - name: engine-api
+              containerPort: 8551
+              protocol: TCP
+            {{- end }}
+            - name: p2p-tcp
+              containerPort: {{ .Values.service.p2pPort }}
+              protocol: TCP
+            - name: p2p-udp
+              containerPort: {{ .Values.service.p2pPort }}
+              protocol: UDP
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.jwt.secretName }}
+            - name: jwt
+              mountPath: /secrets
+              readOnly: true
+            {{- end }}
+
+          {{- /*
+            startupProbe takes over first and gives geth up to 5 min
+            to initialize before liveness kicks in. Critical on minikube
+            where constrained resources slow startup significantly.
+            On mainnet, initial snap sync can take a long time before
+            RPC becomes responsive.
+          */}}
+          startupProbe:
+            httpGet:
+              path: /
+              port: http-rpc
+            failureThreshold: 30
+            periodSeconds: 10       # 30 * 10s = 5 min max startup window
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http-rpc
+            periodSeconds: 30
+            failureThreshold: 6     # 6 * 30s = 3 min before restart
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http-rpc
+            periodSeconds: 10
+            failureThreshold: 3
+
+      volumes:
+        {{- if .Values.jwt.secretName }}
+        - name: jwt
+          secret:
+            secretName: {{ .Values.jwt.secretName }}
+            defaultMode: 0400       # owner read-only — geth enforces this
+        {{- end }}
+
+      {{- /*
+        Give geth time to flush state to disk on shutdown.
+        Without this the default 30s SIGKILL can corrupt chaindata
+        and force a full re-sync on next startup — especially painful
+        on mainnet with 1TB+ of data.
+      */}}
+      terminationGracePeriodSeconds: 120
+
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "geth-node.labels" . | nindent 10 }}
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- /*
+          storageClass is set by the infra layer:
+            values.gke.yaml   → premium-rwo  (regional SSD)
+            values.local.yaml → standard     (minikube hostpath)
+          The network layer (mainnet/sepolia) sets the size,
+          never the class — that's an infra concern.
+        */}}
+        storageClassName: {{ .Values.persistence.storageClass }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
