@@ -12,3 +12,6 @@ jwt:
   externalSecret:
     enabled: true
     secretStoreName: gcp-secretstore
+
+initChown:
+  enabled: true
