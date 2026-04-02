@@ -5,8 +5,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "geth-node/**"
 
 env:
   CHART_NAME: geth-node
