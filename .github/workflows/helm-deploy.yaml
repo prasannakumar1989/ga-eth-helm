@@ -37,8 +37,7 @@ jobs:
         run: |
           helm template geth-sepolia ${{ env.CHART_PATH }} \
             -f ${{ env.CHART_PATH }}/values.yaml \
-            -f ${{ env.CHART_PATH }}/values.gke.yaml \
-            | kubectl apply --dry-run=client -f -
+            -f ${{ env.CHART_PATH }}/values.gke.yaml
 
   package-and-push:
     name: package and push
