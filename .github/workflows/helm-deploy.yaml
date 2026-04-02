@@ -33,7 +33,8 @@ jobs:
       - name: helm lint
         run: |
           helm lint ${{ env.CHART_PATH }} \
-            -f ${{ env.CHART_PATH }}/values.yaml
+            -f ${{ env.CHART_PATH }}/values.yaml \
+            -f ${{ env.CHART_PATH }}/values.gke.yaml
 
       - name: helm template dry run
         run: |
