@@ -1,5 +1,8 @@
 network: mainnet
 
+image:
+  tag: stable # use an actual version here
+
 persistence:
   size: 1Ti
   # storageClass intentionally not set here —

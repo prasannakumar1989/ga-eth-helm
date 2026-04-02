@@ -1,0 +1,120 @@
+# .github/workflows/helm-deploy.yaml
+name: helm deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "geth-node/**"
+
+env:
+  CHART_NAME: geth-node
+  CHART_PATH: ./geth-node
+  GCP_PROJECT: elemental-day-477617-r0
+  GCP_REGION: us-central1
+  AR_REPO: helm-charts
+  GKE_CLUSTER: autopilot-cluster-1
+  GKE_NAMESPACE_SEPOLIA: ethereum-sepolia
+  GKE_NAMESPACE_MAINNET: ethereum-mainnet
+
+jobs:
+  lint:
+    name: lint chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: helm lint
+        run: |
+          helm lint ${{ env.CHART_PATH }} \
+            -f ${{ env.CHART_PATH }}/values.yaml
+
+      - name: helm template dry run
+        run: |
+          helm template geth-sepolia ${{ env.CHART_PATH }} \
+            -f ${{ env.CHART_PATH }}/values.yaml \
+            -f ${{ env.CHART_PATH }}/values.gke.yaml \
+            | kubectl apply --dry-run=client -f -
+
+  package-and-push:
+    name: package and push
+    runs-on: ubuntu-latest
+    needs: lint
+    outputs:
+      chart_version: ${{ steps.chart_version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: configure docker for artifact registry
+        run: |
+          gcloud auth configure-docker ${{ env.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: get chart version
+        id: chart_version
+        run: |
+          VERSION=$(grep '^version:' ${{ env.CHART_PATH }}/Chart.yaml | awk '{print $2}')
+          echo "version=${VERSION}-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - name: package chart
+        run: |
+          helm package ${{ env.CHART_PATH }} \
+            --version ${{ steps.chart_version.outputs.version }} \
+            --destination ./dist
+
+      - name: push to artifact registry
+        run: |
+          helm push ./dist/${{ env.CHART_NAME }}-${{ steps.chart_version.outputs.version }}.tgz \
+            oci://${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPO }}
+
+  deploy-sepolia:
+    name: deploy sepolia
+    runs-on: ubuntu-latest
+    needs: package-and-push
+    environment: sepolia
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GCP_REGION }}
+
+      - name: helm upgrade sepolia
+        run: |
+          helm upgrade --install geth-sepolia \
+            oci://${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.AR_REPO }}/${{ env.CHART_NAME }} \
+            --version ${{ needs.package-and-push.outputs.chart_version }} \
+            -f ${{ env.CHART_PATH }}/values.yaml \
+            -f ${{ env.CHART_PATH }}/values.gke.yaml \
+            -n ${{ env.GKE_NAMESPACE_SEPOLIA }} \
+            --create-namespace \
+            --atomic \
+            --timeout 5m \
+            --wait
