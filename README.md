@@ -41,13 +41,6 @@ Values files available:
   - `jwt-secret.yaml` - JWT authentication
   - `serviceaccount.yaml` - RBAC configuration
 - `charts/` - Dependencies
-- `infra/` - Infrastructure setup scripts
-
-## RBAC
-
-RBAC configurations available for:
-- Mainnet: `infra/helm-deployer-rbac-mainnet.yaml`
-- Sepolia: `infra/helm-deployer-rbac-sepolia.yaml`
 
 ## Uninstall
 
